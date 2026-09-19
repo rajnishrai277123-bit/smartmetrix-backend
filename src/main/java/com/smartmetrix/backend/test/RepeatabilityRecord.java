@@ -2,6 +2,7 @@ package com.smartmetrix.backend.test;
 
 import jakarta.persistence.*;
 import java.time.LocalDateTime;
+import java.time.ZoneId;
 
 @Entity
 @Table(name = "repeatability_records")
@@ -30,7 +31,7 @@ public class RepeatabilityRecord {
     @PrePersist
     public void onCreate() {
         if (createdAt == null) {
-            createdAt = LocalDateTime.now();
+            createdAt = LocalDateTime.now(ZoneId.of("Asia/Kolkata"));
         }
     }
 

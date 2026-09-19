@@ -2,6 +2,7 @@ package com.smartmetrix.backend.test;
 
 import jakarta.persistence.*;
 import java.time.LocalDateTime;
+import java.time.ZoneId;
 
 @Entity
 @Table(name = "eccentricity_records")
@@ -28,7 +29,7 @@ public class EccentricityRecord {
     @PrePersist
     public void onCreate() {
         if (createdAt == null) {
-            createdAt = LocalDateTime.now();
+            createdAt = LocalDateTime.now(ZoneId.of("Asia/Kolkata"));
         }
     }
 
