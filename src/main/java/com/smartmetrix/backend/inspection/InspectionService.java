@@ -22,6 +22,7 @@ import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Service;
 
 import java.time.LocalDateTime;
+import java.time.ZoneId;
 import java.util.Comparator;
 import java.util.List;
 
@@ -250,9 +251,9 @@ public class InspectionService {
         inspection.setOverallResult(overallResult);
         inspection.setStatus(Inspection.COMPLETED);
 
-        // Store the real completion timestamp in the inspection itself.
-        inspection.setCompletedAt(LocalDateTime.now());
-
+        inspection.setCompletedAt(
+                LocalDateTime.now(ZoneId.of("Asia/Kolkata"))
+        );
         Inspection savedInspection =
                 inspectionRepository.save(inspection);
 

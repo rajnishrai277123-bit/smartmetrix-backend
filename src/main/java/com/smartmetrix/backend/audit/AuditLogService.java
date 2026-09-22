@@ -3,7 +3,9 @@ package com.smartmetrix.backend.audit;
 import org.springframework.stereotype.Service;
 
 import java.time.LocalDateTime;
+import java.time.ZoneId;
 import java.util.List;
+
 
 @Service
 public class AuditLogService {
@@ -30,7 +32,9 @@ public class AuditLogService {
         auditLog.setEntityId(entityId);
         auditLog.setOldValue(oldValue);
         auditLog.setNewValue(newValue);
-        auditLog.setTimestamp(LocalDateTime.now());
+        auditLog.setTimestamp(
+                LocalDateTime.now(ZoneId.of("Asia/Kolkata"))
+        );
 
         return auditLogRepository.save(auditLog);
     }
