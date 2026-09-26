@@ -1,6 +1,7 @@
 package com.smartmetrix.backend.instrument;
 
 import com.smartmetrix.backend.instrument.dto.CreateInstrumentRequest;
+import com.smartmetrix.backend.instrument.dto.InstrumentHealthResponse;
 import com.smartmetrix.backend.instrument.dto.UpdateInstrumentRequest;
 import jakarta.validation.Valid;
 import org.springframework.security.access.prepost.PreAuthorize;
@@ -14,9 +15,14 @@ import java.util.List;
 public class InstrumentController {
 
     private final InstrumentService instrumentService;
+    private final InstrumentHealthService instrumentHealthService;
 
-    public InstrumentController(InstrumentService instrumentService) {
+    public InstrumentController(
+            InstrumentService instrumentService,
+            InstrumentHealthService instrumentHealthService) {
+
         this.instrumentService = instrumentService;
+        this.instrumentHealthService = instrumentHealthService;
     }
 
     // =========================
@@ -80,6 +86,27 @@ public class InstrumentController {
             @PathVariable Long id) {
 
         return instrumentService.getInstrumentById(id);
+    }
+
+    // =========================
+    // GET INSTRUMENT HEALTH
+    // =========================
+    // Inspector + Senior Officer + Controller + Admin
+    // can view instrument health score.
+
+    @GetMapping("/{id}/health")
+    @PreAuthorize("""
+            hasAnyRole(
+                'INSPECTOR',
+                'SENIOR_OFFICER',
+                'CONTROLLER',
+                'ADMIN'
+            )
+            """)
+    public InstrumentHealthResponse getInstrumentHealth(
+            @PathVariable Long id) {
+
+        return instrumentHealthService.getInstrumentHealth(id);
     }
 
     // =========================
