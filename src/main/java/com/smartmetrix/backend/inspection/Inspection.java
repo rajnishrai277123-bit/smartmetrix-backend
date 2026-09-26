@@ -1,4 +1,5 @@
-package com.smartmetrix.backend.inspection;
+
+        package com.smartmetrix.backend.inspection;
 
 import jakarta.persistence.*;
 import java.time.LocalDateTime;
@@ -30,6 +31,19 @@ public class Inspection {
 
     private String overallResult;
 
+    /*
+     * Inspection creation time.
+     *
+     * This tells us when the inspection was created.
+     * It is useful for pending/in-progress inspections.
+     */
+    private LocalDateTime createdAt;
+
+    /*
+     * Inspection completion time.
+     *
+     * This is set when all required tests are completed.
+     */
     private LocalDateTime completedAt;
 
     public Inspection() {
@@ -71,6 +85,14 @@ public class Inspection {
         this.overallResult = overallResult;
     }
 
+    public LocalDateTime getCreatedAt() {
+        return createdAt;
+    }
+
+    public void setCreatedAt(LocalDateTime createdAt) {
+        this.createdAt = createdAt;
+    }
+
     public LocalDateTime getCompletedAt() {
         return completedAt;
     }
@@ -79,3 +101,4 @@ public class Inspection {
         this.completedAt = completedAt;
     }
 }
+

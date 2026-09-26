@@ -1,6 +1,7 @@
 package com.smartmetrix.backend.certificate;
 
 import jakarta.persistence.*;
+import java.time.LocalDateTime;
 
 @Entity
 @Table(name = "certificates")
@@ -20,6 +21,9 @@ public class Certificate {
     private String signature;
 
     private String status;
+
+    @Column(name = "generated_at")
+    private LocalDateTime generatedAt;
 
     public Certificate() {
     }
@@ -66,5 +70,13 @@ public class Certificate {
 
     public void setStatus(String status) {
         this.status = status;
+    }
+
+    public LocalDateTime getGeneratedAt() {
+        return generatedAt;
+    }
+
+    public void setGeneratedAt(LocalDateTime generatedAt) {
+        this.generatedAt = generatedAt;
     }
 }

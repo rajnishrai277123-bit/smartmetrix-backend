@@ -86,12 +86,20 @@ public class InspectionService {
 
         Long currentUserId =
                 (Long) authentication.getCredentials();
-
         inspection.setInspectorId(currentUserId);
         inspection.setStatus(Inspection.IN_PROGRESS);
         inspection.setOverallResult(Inspection.RESULT_PENDING);
-        inspection.setCompletedAt(null);
 
+        /*
+         * Store the exact time when inspection is created.
+         */
+        inspection.setCreatedAt(LocalDateTime.now());
+
+        /*
+         * Completion time is still empty because
+         * inspection has not completed yet.
+         */
+        inspection.setCompletedAt(null);
         Inspection savedInspection =
                 inspectionRepository.save(inspection);
 

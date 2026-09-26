@@ -4,10 +4,10 @@ import com.smartmetrix.backend.inspection.Inspection;
 import com.smartmetrix.backend.inspection.InspectionRepository;
 import com.smartmetrix.backend.inspection.exception.InspectionNotFoundException;
 import org.springframework.stereotype.Service;
-
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.time.LocalDateTime;
 import java.util.List;
 
 @Service
@@ -67,6 +67,7 @@ public class CertificateService {
         certificate.setCertificateNumber(certificateNumber);
 
         certificate.setStatus("ISSUED");
+        certificate.setGeneratedAt(LocalDateTime.now());
 
         // Generate SHA-256 hash
         String certificateData =
