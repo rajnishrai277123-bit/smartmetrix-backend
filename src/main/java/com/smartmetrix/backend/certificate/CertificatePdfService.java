@@ -1281,8 +1281,8 @@ public class CertificatePdfService {
             );
 
             // -------------------------------------------------
-            // QR CODE
-            // -------------------------------------------------
+// QR CODE
+// -------------------------------------------------
 
             addHeading(
                     document,
@@ -1290,9 +1290,13 @@ public class CertificatePdfService {
                     headingFont
             );
 
+            String verificationUrl =
+                    "https://smartmetrix-frontend-tvwb.vercel.app/verify/"
+                            + certificate.getCertificateNumber();
+
             byte[] qrBytes =
                     qrCodeService.generateQrCode(
-                            certificate.getCertificateNumber()
+                            verificationUrl
                     );
 
             Image qrImage =
@@ -1311,7 +1315,7 @@ public class CertificatePdfService {
 
             Paragraph qrText =
                     new Paragraph(
-                            "Scan to identify the certificate number",
+                            "Scan to verify this certificate online",
                             smallFont
                     );
 
