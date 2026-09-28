@@ -6,6 +6,7 @@ import com.smartmetrix.backend.audit.AuditLogService;
 import com.smartmetrix.backend.instrument.InstrumentRepository;
 import com.smartmetrix.backend.instrument.exception.InstrumentNotFoundException;
 import com.smartmetrix.backend.inspection.exception.InspectionNotFoundException;
+import com.smartmetrix.backend.notification.NotificationService;
 import com.smartmetrix.backend.test.EccentricityRecord;
 import com.smartmetrix.backend.test.EccentricityRecordRepository;
 import com.smartmetrix.backend.test.RepeatabilityRecord;
@@ -41,6 +42,8 @@ public class InspectionService {
     private final RepeatabilityRecordService repeatabilityRecordService;
     private final EccentricityRecordService eccentricityRecordService;
 
+    private final NotificationService notificationService;
+
     public InspectionService(
             InspectionRepository inspectionRepository,
             InstrumentRepository instrumentRepository,
@@ -50,7 +53,8 @@ public class InspectionService {
             RepeatabilityRecordRepository repeatabilityRecordRepository,
             EccentricityRecordRepository eccentricityRecordRepository,
             RepeatabilityRecordService repeatabilityRecordService,
-            EccentricityRecordService eccentricityRecordService) {
+            EccentricityRecordService eccentricityRecordService,
+            NotificationService notificationService) {
 
         this.inspectionRepository = inspectionRepository;
         this.instrumentRepository = instrumentRepository;
@@ -69,6 +73,9 @@ public class InspectionService {
 
         this.eccentricityRecordService =
                 eccentricityRecordService;
+
+        this.notificationService =
+                notificationService;
     }
 
     public Inspection createInspection(Inspection inspection) {
@@ -86,6 +93,7 @@ public class InspectionService {
 
         Long currentUserId =
                 (Long) authentication.getCredentials();
+
         inspection.setInspectorId(currentUserId);
         inspection.setStatus(Inspection.IN_PROGRESS);
         inspection.setOverallResult(Inspection.RESULT_PENDING);
@@ -100,6 +108,7 @@ public class InspectionService {
          * inspection has not completed yet.
          */
         inspection.setCompletedAt(null);
+
         Inspection savedInspection =
                 inspectionRepository.save(inspection);
 
@@ -262,6 +271,7 @@ public class InspectionService {
         inspection.setCompletedAt(
                 LocalDateTime.now(ZoneId.of("Asia/Kolkata"))
         );
+
         Inspection savedInspection =
                 inspectionRepository.save(inspection);
 
@@ -273,6 +283,33 @@ public class InspectionService {
                 oldStatus,
                 Inspection.COMPLETED
         );
+
+        // ==========================================
+        // NOTIFICATION
+        // ==========================================
+
+        if (Inspection.RESULT_FAIL.equalsIgnoreCase(
+                overallResult)) {
+
+            notificationService.createNotification(
+                    inspection.getInspectorId(),
+                    "Inspection Failed",
+                    "Inspection #" + id +
+                            " has failed. Please review the test results.",
+                    "INSPECTION_FAILED"
+            );
+
+        } else if (Inspection.RESULT_PASS.equalsIgnoreCase(
+                overallResult)) {
+
+            notificationService.createNotification(
+                    inspection.getInspectorId(),
+                    "Inspection Passed",
+                    "Inspection #" + id +
+                            " has passed all required tests.",
+                    "INSPECTION_PASSED"
+            );
+        }
 
         return savedInspection;
     }
@@ -319,6 +356,18 @@ public class InspectionService {
                 id,
                 oldStatus,
                 Inspection.SUBMITTED
+        );
+
+        // ==========================================
+        // NOTIFICATION
+        // ==========================================
+
+        notificationService.createNotification(
+                inspection.getInspectorId(),
+                "Inspection Submitted",
+                "Inspection #" + id +
+                        " has been submitted for approval.",
+                "INSPECTION_SUBMITTED"
         );
 
         return savedInspection;
@@ -380,6 +429,18 @@ public class InspectionService {
                 id,
                 oldStatus,
                 Inspection.APPROVED
+        );
+
+        // ==========================================
+        // NOTIFICATION
+        // ==========================================
+
+        notificationService.createNotification(
+                inspection.getInspectorId(),
+                "Inspection Approved",
+                "Inspection #" + id +
+                        " has been approved by the Senior Officer.",
+                "INSPECTION_APPROVED"
         );
 
         return savedInspection;
@@ -446,6 +507,18 @@ public class InspectionService {
                 id,
                 oldStatus,
                 Inspection.CONTROLLER_APPROVED
+        );
+
+        // ==========================================
+        // NOTIFICATION
+        // ==========================================
+
+        notificationService.createNotification(
+                inspection.getInspectorId(),
+                "Inspection Finally Approved",
+                "Inspection #" + id +
+                        " has been finally approved by the Controller.",
+                "CONTROLLER_APPROVED"
         );
 
         return savedInspection;
