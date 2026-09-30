@@ -269,7 +269,8 @@ public class InspectionService {
         inspection.setStatus(Inspection.COMPLETED);
 
         inspection.setCompletedAt(
-                LocalDateTime.now(ZoneId.of("Asia/Kolkata"))
+                LocalDateTime.now(
+                        ZoneId.of("Asia/Kolkata"))
         );
 
         Inspection savedInspection =
@@ -359,7 +360,7 @@ public class InspectionService {
         );
 
         // ==========================================
-        // NOTIFICATION
+        // NOTIFICATION - INSPECTOR
         // ==========================================
 
         notificationService.createNotification(
@@ -368,6 +369,29 @@ public class InspectionService {
                 "Inspection #" + id +
                         " has been submitted for approval.",
                 "INSPECTION_SUBMITTED"
+        );
+
+        // ==========================================
+        // NOTIFICATION - SENIOR OFFICERS
+        // ==========================================
+
+        long pendingCount =
+                inspectionRepository.countByStatus(
+                        Inspection.SUBMITTED
+                );
+
+        String inspectionText =
+                pendingCount == 1
+                        ? "inspection is"
+                        : "inspections are";
+
+        notificationService.createNotificationForRole(
+                "SENIOR_OFFICER",
+                "Inspection Awaiting Approval",
+                pendingCount + " " +
+                        inspectionText +
+                        " waiting for your approval.",
+                "PENDING_SENIOR_APPROVAL"
         );
 
         return savedInspection;
@@ -432,7 +456,7 @@ public class InspectionService {
         );
 
         // ==========================================
-        // NOTIFICATION
+        // NOTIFICATION - INSPECTOR
         // ==========================================
 
         notificationService.createNotification(
@@ -441,6 +465,31 @@ public class InspectionService {
                 "Inspection #" + id +
                         " has been approved by the Senior Officer.",
                 "INSPECTION_APPROVED"
+        );
+
+        // ==========================================
+        // NOTIFICATION - CONTROLLER
+        // ==========================================
+
+        long pendingControllerCount =
+                inspectionRepository.countByStatus(
+                        Inspection.APPROVED
+                );
+
+        String controllerInspectionText =
+                pendingControllerCount == 1
+                        ? "inspection is"
+                        : "inspections are";
+
+        notificationService.createNotificationForRole(
+                "CONTROLLER",
+                "Inspection Awaiting Final Approval",
+                "Senior Officer approved Inspection #" + id +
+                        ". " +
+                        pendingControllerCount + " " +
+                        controllerInspectionText +
+                        " waiting for your final approval.",
+                "PENDING_CONTROLLER_APPROVAL"
         );
 
         return savedInspection;
@@ -510,11 +559,23 @@ public class InspectionService {
         );
 
         // ==========================================
-        // NOTIFICATION
+        // NOTIFICATION - INSPECTOR
         // ==========================================
 
         notificationService.createNotification(
                 inspection.getInspectorId(),
+                "Inspection Finally Approved",
+                "Inspection #" + id +
+                        " has been finally approved by the Controller.",
+                "CONTROLLER_APPROVED"
+        );
+
+        // ==========================================
+        // NOTIFICATION - SENIOR OFFICER
+        // ==========================================
+
+        notificationService.createNotificationForRole(
+                "SENIOR_OFFICER",
                 "Inspection Finally Approved",
                 "Inspection #" + id +
                         " has been finally approved by the Controller.",

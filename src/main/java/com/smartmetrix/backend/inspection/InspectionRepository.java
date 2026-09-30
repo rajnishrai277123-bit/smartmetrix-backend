@@ -8,4 +8,6 @@ public interface InspectionRepository
         extends JpaRepository<Inspection, Long> {
 
     List<Inspection> findByInstrumentId(Long instrumentId);
+
+    long countByStatus(String status);
 }
