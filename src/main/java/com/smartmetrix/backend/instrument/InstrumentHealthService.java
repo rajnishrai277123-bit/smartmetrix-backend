@@ -39,77 +39,56 @@ public class InstrumentHealthService {
         this.eccentricityRecordRepository = eccentricityRecordRepository;
     }
 
-    public InstrumentHealthResponse getInstrumentHealth(Long instrumentId) {
+    public List<InstrumentHealthResponse> getAllInstrumentHealth() {
+        return instrumentRepository.findAll()
+                .stream()
+                .map(instrument -> getInstrumentHealth(instrument.getId()))
+                .toList();
+    }
 
-        // ==========================================
-        // 1. CHECK INSTRUMENT
-        // ==========================================
+    public InstrumentHealthResponse getInstrumentHealth(Long instrumentId) {
 
         Instrument instrument = instrumentRepository.findById(instrumentId)
                 .orElseThrow(() ->
                         new InstrumentNotFoundException("Instrument not found"));
 
-        // ==========================================
-        // 2. GET ALL INSPECTIONS
-        // ==========================================
-
         List<Inspection> inspections =
                 inspectionRepository.findByInstrumentId(instrumentId);
 
-        // Only inspections with a final PASS or FAIL result
-// will be used for test-quality calculations.
         List<Inspection> completedInspections = inspections.stream()
                 .filter(i ->
-                        Inspection.RESULT_PASS.equalsIgnoreCase(
-                                i.getOverallResult())
-                                || Inspection.RESULT_FAIL.equalsIgnoreCase(
-                                i.getOverallResult()))
+                        Inspection.RESULT_PASS.equalsIgnoreCase(i.getOverallResult())
+                                || Inspection.RESULT_FAIL.equalsIgnoreCase(i.getOverallResult()))
                 .toList();
 
-        // ==========================================
-        // 3. COUNT PASS AND FAIL
-        // ==========================================
-
-        int passedInspections = (int) inspections.stream()
-                .filter(i -> Inspection.RESULT_PASS.equalsIgnoreCase(
-                        i.getOverallResult()))
+        int passedInspections = (int) completedInspections.stream()
+                .filter(i -> Inspection.RESULT_PASS.equalsIgnoreCase(i.getOverallResult()))
                 .count();
 
-        int failedInspections = (int) inspections.stream()
-                .filter(i -> Inspection.RESULT_FAIL.equalsIgnoreCase(
-                        i.getOverallResult()))
+        int failedInspections = (int) completedInspections.stream()
+                .filter(i -> Inspection.RESULT_FAIL.equalsIgnoreCase(i.getOverallResult()))
                 .count();
 
-        // Only inspections with PASS or FAIL are counted.
-        int totalInspections = passedInspections + failedInspections;
+        int totalInspections = completedInspections.size();
 
-        // ==========================================
-        // 4. PASS RATE
-        // ==========================================
+        double passRate = totalInspections == 0
+                ? 0.0
+                : (passedInspections * 100.0) / totalInspections;
 
-        double passRate = 0.0;
+        List<Double> wpScores = new ArrayList<>();
+        List<Double> repeatabilityScores = new ArrayList<>();
+        List<Double> eccentricityScores = new ArrayList<>();
 
-        if (totalInspections > 0) {
-            passRate =
-                    ((double) passedInspections / totalInspections) * 100;
-        }
+        for (Inspection inspection : completedInspections) {
 
-        // ==========================================
-        // 5. WEIGHING PERFORMANCE QUALITY
-        // ==========================================
-
-        List<Double> wpQualityScores = new ArrayList<>();
-
-        for (Inspection inspection : completedInspections)  {
-
+            // Weighing performance quality
             List<TestRecord> testRecords =
-                    testRecordRepository.findByInspectionId(
-                            inspection.getId());
+                    testRecordRepository.findByInspectionId(inspection.getId());
 
             for (TestRecord record : testRecords) {
 
                 if (!"WEIGHING_PERFORMANCE".equalsIgnoreCase(
-                        record.getTestType())) {
+                        String.valueOf(record.getTestType()))) {
                     continue;
                 }
 
@@ -120,221 +99,101 @@ public class InstrumentHealthService {
                     continue;
                 }
 
-                double absoluteError = Math.abs(error);
-                double quality;
-
-                if (absoluteError >= mpe) {
-                    quality = 0.0;
-                } else {
-                    quality = (1.0 - (absoluteError / mpe)) * 100.0;
-                }
-
-                wpQualityScores.add(quality);
-            }
-        }
-
-        // ==========================================
-        // 6. AVERAGE WP QUALITY
-        // ==========================================
-
-        double wpQuality = 0.0;
-
-        if (!wpQualityScores.isEmpty()) {
-
-            double totalQuality = 0.0;
-
-            for (Double score : wpQualityScores) {
-                totalQuality += score;
+                double quality = calculateQuality(Math.abs(error), mpe);
+                wpScores.add(quality);
             }
 
-            wpQuality = totalQuality / wpQualityScores.size();
-        }
+            // Repeatability quality
+            List<RepeatabilityRecord> repeatabilityRecords =
+                    repeatabilityRecordRepository.findByInspectionId(
+                            inspection.getId());
 
-        // ==========================================
-        // 7. REPEATABILITY QUALITY
-        // ==========================================
+            List<Double> repeatabilityWeights = new ArrayList<>();
 
-        List<Double> repeatabilityQualityScores = new ArrayList<>();
-
-            for (Inspection inspection : completedInspections) {
-
-            List<RepeatabilityRecord> records =
-                    repeatabilityRecordRepository
-                            .findByInspectionId(inspection.getId());
-
-            if (records.isEmpty()) {
-                continue;
-            }
-
-            List<Double> observedWeights = new ArrayList<>();
-
-            for (RepeatabilityRecord record : records) {
-
+            for (RepeatabilityRecord record : repeatabilityRecords) {
                 if (record.getObservedWeight() != null) {
-                    observedWeights.add(record.getObservedWeight());
+                    repeatabilityWeights.add(record.getObservedWeight());
                 }
             }
-
-            if (observedWeights.size() < 2) {
-                continue;
-            }
-
-            double minimum = observedWeights.stream()
-                    .min(Double::compareTo)
-                    .orElse(0.0);
-
-            double maximum = observedWeights.stream()
-                    .max(Double::compareTo)
-                    .orElse(0.0);
-
-            double range = maximum - minimum;
 
             Double scaleInterval = instrument.getScaleInterval();
 
-            if (scaleInterval == null || scaleInterval <= 0) {
-                continue;
+            if (repeatabilityWeights.size() >= 2
+                    && scaleInterval != null
+                    && scaleInterval > 0) {
+
+                double min = repeatabilityWeights.stream()
+                        .min(Double::compareTo)
+                        .orElse(0.0);
+
+                double max = repeatabilityWeights.stream()
+                        .max(Double::compareTo)
+                        .orElse(0.0);
+
+                double range = max - min;
+
+                double quality = calculateQuality(range, scaleInterval);
+                repeatabilityScores.add(quality);
             }
 
-            double quality;
+            // Eccentricity quality
+            List<EccentricityRecord> eccentricityRecords =
+                    eccentricityRecordRepository.findByInspectionId(
+                            inspection.getId());
 
-            if (range >= scaleInterval) {
-                quality = 0.0;
-            } else {
-                quality = (1.0 - (range / scaleInterval)) * 100.0;
-            }
+            List<Double> eccentricityWeights = new ArrayList<>();
 
-            repeatabilityQualityScores.add(quality);
-        }
-
-        // ==========================================
-        // 8. AVERAGE REPEATABILITY QUALITY
-        // ==========================================
-
-        double repeatabilityQuality = 0.0;
-
-        if (!repeatabilityQualityScores.isEmpty()) {
-
-            double totalQuality = 0.0;
-
-            for (Double score : repeatabilityQualityScores) {
-                totalQuality += score;
-            }
-
-            repeatabilityQuality =
-                    totalQuality / repeatabilityQualityScores.size();
-        }
-
-        // ==========================================
-        // 9. ECCENTRICITY QUALITY
-        // ==========================================
-
-        List<Double> eccentricityQualityScores = new ArrayList<>();
-
-                for (Inspection inspection : completedInspections) {
-
-            List<EccentricityRecord> records =
-                    eccentricityRecordRepository
-                            .findByInspectionId(inspection.getId());
-
-            if (records.isEmpty()) {
-                continue;
-            }
-
-            List<Double> observedWeights = new ArrayList<>();
-
-            for (EccentricityRecord record : records) {
-
+            for (EccentricityRecord record : eccentricityRecords) {
                 if (record.getObservedWeight() != null) {
-                    observedWeights.add(record.getObservedWeight());
+                    eccentricityWeights.add(record.getObservedWeight());
                 }
             }
 
-            if (observedWeights.size() < 2) {
-                continue;
+            if (eccentricityWeights.size() >= 2
+                    && scaleInterval != null
+                    && scaleInterval > 0) {
+
+                double min = eccentricityWeights.stream()
+                        .min(Double::compareTo)
+                        .orElse(0.0);
+
+                double max = eccentricityWeights.stream()
+                        .max(Double::compareTo)
+                        .orElse(0.0);
+
+                double range = max - min;
+
+                double quality = calculateQuality(range, scaleInterval);
+                eccentricityScores.add(quality);
             }
-
-            double minimum = observedWeights.stream()
-                    .min(Double::compareTo)
-                    .orElse(0.0);
-
-            double maximum = observedWeights.stream()
-                    .max(Double::compareTo)
-                    .orElse(0.0);
-
-            double range = maximum - minimum;
-
-            Double scaleInterval = instrument.getScaleInterval();
-
-            if (scaleInterval == null || scaleInterval <= 0) {
-                continue;
-            }
-
-            double quality;
-
-            if (range >= scaleInterval) {
-                quality = 0.0;
-            } else {
-                quality = (1.0 - (range / scaleInterval)) * 100.0;
-            }
-
-            eccentricityQualityScores.add(quality);
         }
 
-        // ==========================================
-        // 10. AVERAGE ECCENTRICITY QUALITY
-        // ==========================================
+        double wpQuality = average(wpScores);
+        double repeatabilityQuality = average(repeatabilityScores);
+        double eccentricityQuality = average(eccentricityScores);
 
-        double eccentricityQuality = 0.0;
+        boolean hasWP = !wpScores.isEmpty();
+        boolean hasRepeatability = !repeatabilityScores.isEmpty();
+        boolean hasEccentricity = !eccentricityScores.isEmpty();
 
-        if (!eccentricityQualityScores.isEmpty()) {
+        double healthScore = 0.0;
+        String healthStatus;
 
-            double totalQuality = 0.0;
+        if (totalInspections == 0) {
 
-            for (Double score : eccentricityQualityScores) {
-                totalQuality += score;
-            }
-
-            eccentricityQuality =
-                    totalQuality / eccentricityQualityScores.size();
-        }
-
-        // ==========================================
-        // 11. CHECK AVAILABLE QUALITY DATA
-        // ==========================================
-
-        boolean hasWP = !wpQualityScores.isEmpty();
-
-        boolean hasRepeatability =
-                !repeatabilityQualityScores.isEmpty();
-
-        boolean hasEccentricity =
-                !eccentricityQualityScores.isEmpty();
-
-        // ==========================================
-        // 12. FINAL HEALTH SCORE
-        // ==========================================
-
-        double healthScore;
-
-        if (inspections.isEmpty() || totalInspections == 0) {
-
-            healthScore = 0.0;
-
-        } else if (!hasWP
-                && !hasRepeatability
-                && !hasEccentricity) {
-
-            healthScore = passRate;
+            healthStatus = "NO_DATA";
 
         } else {
 
             /*
-             * Final Health Score:
+             * Base weights:
+             * Pass rate      = 40%
+             * Weighing test  = 30%
+             * Repeatability  = 15%
+             * Eccentricity   = 15%
              *
-             * Pass Rate       = 40%
-             * WP Quality      = 30%
-             * Repeatability   = 15%
-             * Eccentricity    = 15%
+             * Missing test types are excluded.
+             * Remaining weights are normalized automatically.
              */
 
             double weightedScore = passRate * 0.40;
@@ -356,53 +215,15 @@ public class InstrumentHealthService {
             }
 
             healthScore = weightedScore / totalWeight;
+
+            if (healthScore >= 80.0) {
+                healthStatus = "HEALTHY";
+            } else if (healthScore >= 50.0) {
+                healthStatus = "WARNING";
+            } else {
+                healthStatus = "CRITICAL";
+            }
         }
-
-        // ==========================================
-        // 13. HEALTH STATUS
-        // ==========================================
-
-        String healthStatus;
-
-        if (inspections.isEmpty() || totalInspections == 0) {
-
-            healthStatus = "NO_DATA";
-
-        } else if (healthScore >= 80) {
-
-            healthStatus = "HEALTHY";
-
-        } else if (healthScore >= 50) {
-
-            healthStatus = "WARNING";
-
-        } else {
-
-            healthStatus = "CRITICAL";
-        }
-
-        // ==========================================
-        // 14. ROUND VALUES
-        // ==========================================
-
-        double roundedPassRate =
-                Math.round(passRate * 100.0) / 100.0;
-
-        double roundedWpQuality =
-                Math.round(wpQuality * 100.0) / 100.0;
-
-        double roundedRepeatabilityQuality =
-                Math.round(repeatabilityQuality * 100.0) / 100.0;
-
-        double roundedEccentricityQuality =
-                Math.round(eccentricityQuality * 100.0) / 100.0;
-
-        double roundedHealthScore =
-                Math.round(healthScore * 100.0) / 100.0;
-
-        // ==========================================
-        // 15. RETURN RESPONSE
-        // ==========================================
 
         return new InstrumentHealthResponse(
                 instrument.getId(),
@@ -411,12 +232,52 @@ public class InstrumentHealthService {
                 totalInspections,
                 passedInspections,
                 failedInspections,
-                roundedPassRate,
-                roundedWpQuality,
-                roundedRepeatabilityQuality,
-                roundedEccentricityQuality,
-                roundedHealthScore,
+                round(passRate),
+                round(wpQuality),
+                round(repeatabilityQuality),
+                round(eccentricityQuality),
+                round(healthScore),
                 healthStatus
         );
+    }
+
+    /*
+     * Prototype scoring policy:
+     * At 0% of limit: quality = 100
+     * At 100% of limit: quality = 50
+     * At 200% or more: quality = 0
+     *
+     * This is a project-defined score, not an official OIML formula.
+     */
+    private double calculateQuality(
+            double measuredValue,
+            double allowedLimit) {
+
+        if (allowedLimit <= 0) {
+            return 0.0;
+        }
+
+        double ratio = Math.abs(measuredValue) / allowedLimit;
+        double quality = 100.0 - (ratio * 50.0);
+
+        return Math.max(0.0, Math.min(100.0, quality));
+    }
+
+    private double average(List<Double> scores) {
+        if (scores == null || scores.isEmpty()) {
+            return 0.0;
+        }
+
+        double total = 0.0;
+
+        for (Double score : scores) {
+            total += score;
+        }
+
+        return total / scores.size();
+    }
+
+    private double round(double value) {
+        return Math.round(value * 100.0) / 100.0;
     }
 }

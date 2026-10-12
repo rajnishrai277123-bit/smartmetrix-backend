@@ -1,3 +1,4 @@
+
 package com.smartmetrix.backend.instrument;
 
 import com.smartmetrix.backend.instrument.dto.CreateInstrumentRequest;
@@ -25,10 +26,7 @@ public class InstrumentController {
         this.instrumentHealthService = instrumentHealthService;
     }
 
-    // =========================
     // CREATE INSTRUMENT
-    // =========================
-
     @PostMapping
     public Instrument createInstrument(
             @Valid @RequestBody CreateInstrumentRequest request) {
@@ -47,12 +45,7 @@ public class InstrumentController {
         return instrumentService.saveInstrument(instrument);
     }
 
-    // =========================
     // GET ALL INSTRUMENTS
-    // =========================
-    // Inspector + Senior Officer + Controller + Admin
-    // can view instruments.
-
     @GetMapping
     @PreAuthorize("""
             hasAnyRole(
@@ -63,16 +56,10 @@ public class InstrumentController {
             )
             """)
     public List<Instrument> getAllInstruments() {
-
         return instrumentService.getAllInstruments();
     }
 
-    // =========================
     // GET INSTRUMENT BY ID
-    // =========================
-    // Inspector + Senior Officer + Controller + Admin
-    // can view a particular instrument.
-
     @GetMapping("/{id}")
     @PreAuthorize("""
             hasAnyRole(
@@ -82,18 +69,11 @@ public class InstrumentController {
                 'ADMIN'
             )
             """)
-    public Instrument getInstrumentById(
-            @PathVariable Long id) {
-
+    public Instrument getInstrumentById(@PathVariable Long id) {
         return instrumentService.getInstrumentById(id);
     }
 
-    // =========================
-    // GET INSTRUMENT HEALTH
-    // =========================
-    // Inspector + Senior Officer + Controller + Admin
-    // can view instrument health score.
-
+    // GET HEALTH OF ONE INSTRUMENT
     @GetMapping("/{id}/health")
     @PreAuthorize("""
             hasAnyRole(
@@ -109,12 +89,21 @@ public class InstrumentController {
         return instrumentHealthService.getInstrumentHealth(id);
     }
 
-    // =========================
-    // UPDATE INSTRUMENT
-    // =========================
-    // Class-level security means:
-    // Inspector + Admin only.
+    // GET HEALTH OF ALL INSTRUMENTS
+    @GetMapping("/health")
+    @PreAuthorize("""
+            hasAnyRole(
+                'INSPECTOR',
+                'SENIOR_OFFICER',
+                'CONTROLLER',
+                'ADMIN'
+            )
+            """)
+    public List<InstrumentHealthResponse> getAllInstrumentHealth() {
+        return instrumentHealthService.getAllInstrumentHealth();
+    }
 
+    // UPDATE INSTRUMENT
     @PutMapping("/{id}")
     public Instrument updateInstrument(
             @PathVariable Long id,
@@ -123,15 +112,9 @@ public class InstrumentController {
         return instrumentService.updateInstrument(id, request);
     }
 
-    // =========================
     // DELETE INSTRUMENT
-    // =========================
-    // Inspector + Admin only.
-
     @DeleteMapping("/{id}")
-    public void deleteInstrument(
-            @PathVariable Long id) {
-
+    public void deleteInstrument(@PathVariable Long id) {
         instrumentService.deleteInstrument(id);
     }
 }
