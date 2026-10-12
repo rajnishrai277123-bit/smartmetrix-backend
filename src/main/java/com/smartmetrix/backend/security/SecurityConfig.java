@@ -1,3 +1,4 @@
+
 package com.smartmetrix.backend.security;
 
 import jakarta.servlet.http.HttpServletResponse;
@@ -28,83 +29,61 @@ import java.util.List;
 public class SecurityConfig {
 
     private final JwtAuthenticationFilter jwtAuthenticationFilter;
-
     private final String allowedOrigins;
 
     public SecurityConfig(
             JwtAuthenticationFilter jwtAuthenticationFilter,
-            @Value("${app.cors.allowed-origins}")
-            String allowedOrigins) {
-
+            @Value("${app.cors.allowed-origins}") String allowedOrigins) {
         this.jwtAuthenticationFilter = jwtAuthenticationFilter;
         this.allowedOrigins = allowedOrigins;
     }
 
-    // Password encryption
     @Bean
     public PasswordEncoder passwordEncoder() {
-
         return new BCryptPasswordEncoder();
     }
 
-    // Main Spring Security configuration
     @Bean
     public SecurityFilterChain securityFilterChain(
             HttpSecurity http) throws Exception {
 
         http
-
-                // Disable CSRF because we are using JWT
                 .csrf(csrf -> csrf.disable())
 
-                // Enable CORS
-                .cors(cors ->
-                        cors.configurationSource(
-                                corsConfigurationSource()
-                        ))
+                // Enable CORS before security authorization.
+                .cors(cors -> cors.configurationSource(corsConfigurationSource()))
 
-                // JWT based application = stateless
                 .sessionManagement(session ->
-                        session.sessionCreationPolicy(
-                                SessionCreationPolicy.STATELESS
-                        ))
+                        session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
 
-                // Endpoint authorization
                 .authorizeHttpRequests(auth -> auth
+                        // Preflight requests must be allowed.
+                        .requestMatchers(
+                                org.springframework.http.HttpMethod.OPTIONS, "/**"
+                        ).permitAll()
                         .requestMatchers("/api/auth/login").permitAll()
                         .requestMatchers("/api/verify/**").permitAll()
                         .requestMatchers("/swagger-ui/**", "/swagger-ui.html").permitAll()
                         .requestMatchers("/v3/api-docs/**").permitAll()
                         .requestMatchers("/error").permitAll()
-                        .anyRequest().authenticated())
-
-                // Proper 401 / 403 handling
-                .exceptionHandling(exception -> exception
-
-                        // No JWT / invalid authentication
-                        .authenticationEntryPoint(
-                                (request, response, authException) -> {
-
-                                    response.sendError(
-                                            HttpServletResponse.SC_UNAUTHORIZED,
-                                            "Unauthorized"
-                                    );
-                                }
-                        )
-
-                        // Valid user but insufficient permission
-                        .accessDeniedHandler(
-                                (request, response, accessDeniedException) -> {
-
-                                    response.sendError(
-                                            HttpServletResponse.SC_FORBIDDEN,
-                                            "Forbidden"
-                                    );
-                                }
-                        )
+                        .anyRequest().authenticated()
                 )
 
-                // JWT filter runs before Spring's username/password filter
+                .exceptionHandling(exception -> exception
+                        .authenticationEntryPoint((request, response, authException) -> {
+                            response.sendError(
+                                    HttpServletResponse.SC_UNAUTHORIZED,
+                                    "Unauthorized"
+                            );
+                        })
+                        .accessDeniedHandler((request, response, accessDeniedException) -> {
+                            response.sendError(
+                                    HttpServletResponse.SC_FORBIDDEN,
+                                    "Forbidden"
+                            );
+                        })
+                )
+
                 .addFilterBefore(
                         jwtAuthenticationFilter,
                         UsernamePasswordAuthenticationFilter.class
@@ -113,60 +92,36 @@ public class SecurityConfig {
         return http.build();
     }
 
-    // CORS configuration
     @Bean
     public CorsConfigurationSource corsConfigurationSource() {
 
-        CorsConfiguration configuration =
-                new CorsConfiguration();
+        CorsConfiguration configuration = new CorsConfiguration();
 
-        // Allowed frontend URLs
         configuration.setAllowedOrigins(
-                Arrays.stream(
-                                allowedOrigins.split(",")
-                        )
+                Arrays.stream(allowedOrigins.split(","))
                         .map(String::trim)
+                        .filter(origin -> !origin.isEmpty())
                         .toList()
         );
 
-        // Allowed HTTP methods
         configuration.setAllowedMethods(
-                List.of(
-                        "GET",
-                        "POST",
-                        "PUT",
-                        "DELETE",
-                        "PATCH",
-                        "OPTIONS"
-                )
+                List.of("GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS")
         );
 
-        // Allowed request headers
         configuration.setAllowedHeaders(
-                List.of(
-                        "Authorization",
-                        "Content-Type",
-                        "Accept"
-                )
+                List.of("Authorization", "Content-Type", "Accept")
         );
 
-        // Headers frontend is allowed to read
         configuration.setExposedHeaders(
-                List.of(
-                        "Authorization"
-                )
+                List.of("Authorization")
         );
 
-        // Allow credentials
         configuration.setAllowCredentials(true);
 
         UrlBasedCorsConfigurationSource source =
                 new UrlBasedCorsConfigurationSource();
 
-        source.registerCorsConfiguration(
-                "/**",
-                configuration
-        );
+        source.registerCorsConfiguration("/**", configuration);
 
         return source;
     }
