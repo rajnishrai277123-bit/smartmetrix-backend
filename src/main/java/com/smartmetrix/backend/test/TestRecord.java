@@ -1,3 +1,4 @@
+
 package com.smartmetrix.backend.test;
 
 import jakarta.persistence.*;
@@ -24,26 +25,28 @@ public class TestRecord {
     private String clientRecordId;
 
     private Long inspectionId;
-
     private String testType;
-
     private Double referenceWeight;
-
     private Double observedWeight;
-
     private Double error;
-
     private Double mpe;
-
     private Double temperature;
-
     private Double humidity;
-
     private Double vibration;
-
     private String result;
-
     private String testStage;
+
+    @Column(name = "compliance_explanation", length = 500)
+    private String complianceExplanation;
+
+    @Column(name = "environment_risk_level", length = 20)
+    private String environmentRiskLevel;
+
+    @Column(name = "environment_risk_explanation", length = 1000)
+    private String environmentRiskExplanation;
+
+    @Column(name = "environment_recommendation", length = 500)
+    private String environmentRecommendation;
 
     @Column(name = "created_at")
     private LocalDateTime createdAt;
@@ -54,7 +57,9 @@ public class TestRecord {
     @PrePersist
     public void onCreate() {
         if (createdAt == null) {
-            createdAt = LocalDateTime.now(ZoneId.of("Asia/Kolkata"));
+            createdAt = LocalDateTime.now(
+                    ZoneId.of("Asia/Kolkata")
+            );
         }
     }
 
@@ -156,6 +161,40 @@ public class TestRecord {
 
     public void setTestStage(String testStage) {
         this.testStage = testStage;
+    }
+
+    public String getComplianceExplanation() {
+        return complianceExplanation;
+    }
+
+    public void setComplianceExplanation(String complianceExplanation) {
+        this.complianceExplanation = complianceExplanation;
+    }
+
+    public String getEnvironmentRiskLevel() {
+        return environmentRiskLevel;
+    }
+
+    public void setEnvironmentRiskLevel(String environmentRiskLevel) {
+        this.environmentRiskLevel = environmentRiskLevel;
+    }
+
+    public String getEnvironmentRiskExplanation() {
+        return environmentRiskExplanation;
+    }
+
+    public void setEnvironmentRiskExplanation(
+            String environmentRiskExplanation) {
+        this.environmentRiskExplanation = environmentRiskExplanation;
+    }
+
+    public String getEnvironmentRecommendation() {
+        return environmentRecommendation;
+    }
+
+    public void setEnvironmentRecommendation(
+            String environmentRecommendation) {
+        this.environmentRecommendation = environmentRecommendation;
     }
 
     public LocalDateTime getCreatedAt() {

@@ -1,3 +1,4 @@
+
 package com.smartmetrix.backend.analytics;
 
 import java.util.List;
@@ -103,15 +104,18 @@ public class AdvancedAnalyticsResponse {
         private String date;
         private double error;
         private String result;
+        private String testType;
 
         public TrendPoint(
                 String date,
                 double error,
-                String result) {
+                String result,
+                String testType) {
 
             this.date = date;
             this.error = error;
             this.result = result;
+            this.testType = testType;
         }
 
         public String getDate() {
@@ -124,6 +128,10 @@ public class AdvancedAnalyticsResponse {
 
         public String getResult() {
             return result;
+        }
+
+        public String getTestType() {
+            return testType;
         }
     }
 }

@@ -1,3 +1,4 @@
+
 package com.smartmetrix.backend.audit;
 
 import org.springframework.web.bind.annotation.*;
@@ -48,4 +49,19 @@ public class AuditLogController {
                 entityId
         );
     }
+
+    // Verify audit hash chain
+    @GetMapping("/verify")
+    public String verifyChain() {
+
+        boolean valid = auditLogService.verifyChain();
+
+        if (valid) {
+            return "Audit chain is valid";
+        }
+
+        return "Audit chain is INVALID";
+    }
+
+    // Temporary migration endpoint
 }

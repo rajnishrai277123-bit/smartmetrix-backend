@@ -1,9 +1,11 @@
+
 package com.smartmetrix.backend.analytics;
 
 import com.smartmetrix.backend.environment.EnvironmentRecord;
 import com.smartmetrix.backend.environment.EnvironmentRecordRepository;
 import com.smartmetrix.backend.inspection.Inspection;
 import com.smartmetrix.backend.inspection.InspectionRepository;
+import com.smartmetrix.backend.instrument.InstrumentRepository;
 import com.smartmetrix.backend.test.EccentricityRecord;
 import com.smartmetrix.backend.test.EccentricityRecordRepository;
 import com.smartmetrix.backend.test.EccentricityRecordService;
@@ -14,13 +16,19 @@ import com.smartmetrix.backend.test.RepeatabilityRecordService;
 import com.smartmetrix.backend.test.RepeatabilitySummaryResponse;
 import com.smartmetrix.backend.test.TestRecord;
 import com.smartmetrix.backend.test.TestRecordRepository;
-import org.springframework.stereotype.Service;
 
+import org.springframework.http.HttpStatus;
+import org.springframework.stereotype.Service;
+import org.springframework.web.server.ResponseStatusException;
+
+import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Locale;
+import java.util.Objects;
 import java.util.Set;
 
 @Service
@@ -29,6 +37,8 @@ public class AdvancedAnalyticsService {
     private final TestRecordRepository testRecordRepository;
     private final InspectionRepository inspectionRepository;
     private final EnvironmentRecordRepository environmentRecordRepository;
+    private final InstrumentRepository instrumentRepository;
+
     private final RepeatabilityRecordRepository repeatabilityRecordRepository;
     private final EccentricityRecordRepository eccentricityRecordRepository;
 
@@ -39,6 +49,7 @@ public class AdvancedAnalyticsService {
             TestRecordRepository testRecordRepository,
             InspectionRepository inspectionRepository,
             EnvironmentRecordRepository environmentRecordRepository,
+            InstrumentRepository instrumentRepository,
             RepeatabilityRecordRepository repeatabilityRecordRepository,
             EccentricityRecordRepository eccentricityRecordRepository,
             RepeatabilityRecordService repeatabilityRecordService,
@@ -47,40 +58,57 @@ public class AdvancedAnalyticsService {
         this.testRecordRepository = testRecordRepository;
         this.inspectionRepository = inspectionRepository;
         this.environmentRecordRepository = environmentRecordRepository;
+        this.instrumentRepository = instrumentRepository;
+
         this.repeatabilityRecordRepository = repeatabilityRecordRepository;
         this.eccentricityRecordRepository = eccentricityRecordRepository;
 
-        this.repeatabilityRecordService =
-                repeatabilityRecordService;
-
-        this.eccentricityRecordService =
-                eccentricityRecordService;
+        this.repeatabilityRecordService = repeatabilityRecordService;
+        this.eccentricityRecordService = eccentricityRecordService;
     }
 
-    public AdvancedAnalyticsResponse analyzeInstrument(
-            Long instrumentId) {
+    public AdvancedAnalyticsResponse analyzeInstrument(Long instrumentId) {
 
-        if (instrumentId == null) {
-            throw new IllegalArgumentException(
-                    "Instrument ID is required");
+        // =====================================================
+        // 0. VALIDATE INSTRUMENT ID
+        // =====================================================
+
+        if (instrumentId == null || instrumentId <= 0) {
+            throw new ResponseStatusException(
+                    HttpStatus.BAD_REQUEST,
+                    "A valid positive instrument ID is required"
+            );
         }
+
+        /*
+         * Verify that the instrument exists before calculating
+         * analytics. A nonexistent instrument must not receive
+         * a normal analytics response with zero values.
+         */
+
+        instrumentRepository.findById(instrumentId)
+                .orElseThrow(() -> new ResponseStatusException(
+                        HttpStatus.NOT_FOUND,
+                        "Instrument not found with ID: " + instrumentId
+                ));
 
         // =====================================================
         // 1. WEIGHING PERFORMANCE RECORDS
         // =====================================================
 
-        List<TestRecord> allRecords =
-                testRecordRepository.findAll();
+        List<TestRecord> allRecords = testRecordRepository.findAll();
 
-        List<TestRecord> records =
-                new ArrayList<>();
+        List<TestRecord> records = new ArrayList<>();
 
         /*
-         * Only WEIGHING_PERFORMANCE records are used
-         * for measurement-error statistics and trend.
+         * Only completed PASS/FAIL WEIGHING_PERFORMANCE records
+         * with a recorded measurement error are included.
          *
-         * Repeatability and Eccentricity remain
-         * separate test types.
+         * Records with null error are excluded from the valid
+         * analytics set because null must not be interpreted as
+         * a genuine zero measurement error.
+         *
+         * Repeatability and Eccentricity use separate metrics.
          */
 
         for (TestRecord record : allRecords) {
@@ -89,23 +117,27 @@ public class AdvancedAnalyticsService {
                 continue;
             }
 
-            if (!"WEIGHING_PERFORMANCE".equals(
-                    record.getTestType())) {
+            if (!"WEIGHING_PERFORMANCE".equals(record.getTestType())) {
                 continue;
             }
 
-            Inspection inspection =
-                    inspectionRepository
-                            .findById(record.getInspectionId())
-                            .orElse(null);
+            if (!isFinalResult(record.getResult())) {
+                continue;
+            }
+
+            if (record.getError() == null) {
+                continue;
+            }
+
+            Inspection inspection = inspectionRepository
+                    .findById(record.getInspectionId())
+                    .orElse(null);
 
             if (inspection == null) {
                 continue;
             }
 
-            if (instrumentId.equals(
-                    inspection.getInstrumentId())) {
-
+            if (instrumentId.equals(inspection.getInstrumentId())) {
                 records.add(record);
             }
         }
@@ -114,22 +146,22 @@ public class AdvancedAnalyticsService {
         // 2. REPEATABILITY TESTS
         // =====================================================
 
-        List<RepeatabilityRecord>
-                allRepeatabilityRecords =
+        List<RepeatabilityRecord> allRepeatabilityRecords =
                 repeatabilityRecordRepository.findAll();
 
         /*
-         * One testRunId = ONE repeatability test.
+         * One testRunId represents ONE repeatability test.
          *
-         * 5 readings inside one testRunId
-         * are counted as one test.
+         * A valid run must contain exactly five readings:
+         * 1, 2, 3, 4 and 5.
+         *
+         * Duplicate or missing reading numbers are rejected.
+         * All readings must belong to the same inspection.
          */
 
-        Set<Long> repeatabilityTestRunIds =
-                new HashSet<>();
+        Set<Long> repeatabilityTestRunIds = new HashSet<>();
 
-        for (RepeatabilityRecord record :
-                allRepeatabilityRecords) {
+        for (RepeatabilityRecord record : allRepeatabilityRecords) {
 
             if (record.getInspectionId() == null) {
                 continue;
@@ -139,33 +171,53 @@ public class AdvancedAnalyticsService {
                 continue;
             }
 
-            Inspection inspection =
-                    inspectionRepository
-                            .findById(record.getInspectionId())
-                            .orElse(null);
+            Inspection inspection = inspectionRepository
+                    .findById(record.getInspectionId())
+                    .orElse(null);
 
             if (inspection == null) {
                 continue;
             }
 
-            if (!instrumentId.equals(
-                    inspection.getInstrumentId())) {
+            if (!instrumentId.equals(inspection.getInstrumentId())) {
+                continue;
+            }
+
+            Long testRunId = record.getTestRunId();
+
+            // Avoid validating the same run repeatedly.
+            if (repeatabilityTestRunIds.contains(testRunId)) {
                 continue;
             }
 
             List<RepeatabilityRecord> runRecords =
-                    repeatabilityRecordRepository
-                            .findByTestRunId(
-                                    record.getTestRunId());
+                    repeatabilityRecordRepository.findByTestRunId(testRunId);
+
+            if (!isValidRepeatabilityRun(
+                    runRecords,
+                    record.getInspectionId())) {
+                continue;
+            }
 
             /*
-             * A completed repeatability test
-             * requires exactly 5 readings.
+             * Validate the run using the existing summary service.
+             * Invalid historical runs must not affect analytics.
              */
-            if (runRecords.size() == 5) {
 
-                repeatabilityTestRunIds.add(
-                        record.getTestRunId());
+            try {
+
+                RepeatabilitySummaryResponse summary =
+                        repeatabilityRecordService.getSummary(testRunId);
+
+                if (summary != null
+                        && isFinalResult(summary.getResult())) {
+
+                    repeatabilityTestRunIds.add(testRunId);
+                }
+
+            } catch (Exception ignored) {
+
+                // Invalid historical runs are excluded.
             }
         }
 
@@ -173,63 +225,81 @@ public class AdvancedAnalyticsService {
         // 3. ECCENTRICITY TESTS
         // =====================================================
 
-        List<EccentricityRecord>
-                allEccentricityRecords =
+        List<EccentricityRecord> allEccentricityRecords =
                 eccentricityRecordRepository.findAll();
 
         /*
-         * One inspection = ONE eccentricity test.
+         * One inspection represents ONE eccentricity test.
          *
-         * The 5 positions are:
-         * LEFT
-         * RIGHT
-         * FRONT
-         * BACK
-         * CENTER
+         * A valid test requires all five unique positions:
+         * LEFT, RIGHT, FRONT, BACK and CENTER.
+         *
+         * Historical REAR positions are normalized to BACK.
+         * Missing or duplicate positions are rejected.
          */
 
-        Set<Long> eccentricityInspectionIds =
-                new HashSet<>();
+        Set<Long> eccentricityInspectionIds = new HashSet<>();
 
-        for (EccentricityRecord record :
-                allEccentricityRecords) {
+        for (EccentricityRecord record : allEccentricityRecords) {
 
             if (record.getInspectionId() == null) {
                 continue;
             }
 
-            Inspection inspection =
-                    inspectionRepository
-                            .findById(record.getInspectionId())
-                            .orElse(null);
+            Inspection inspection = inspectionRepository
+                    .findById(record.getInspectionId())
+                    .orElse(null);
 
             if (inspection == null) {
                 continue;
             }
 
-            if (!instrumentId.equals(
-                    inspection.getInstrumentId())) {
+            if (!instrumentId.equals(inspection.getInstrumentId())) {
+                continue;
+            }
+
+            Long inspectionId = record.getInspectionId();
+
+            // Avoid validating the same inspection repeatedly.
+            if (eccentricityInspectionIds.contains(inspectionId)) {
                 continue;
             }
 
             List<EccentricityRecord> inspectionRecords =
-                    eccentricityRecordRepository
-                            .findByInspectionId(
-                                    record.getInspectionId());
+                    eccentricityRecordRepository.findByInspectionId(
+                            inspectionId
+                    );
+
+            if (!isValidEccentricityTest(
+                    inspectionRecords,
+                    inspectionId)) {
+                continue;
+            }
 
             /*
-             * A completed eccentricity test
-             * requires exactly 5 positions.
+             * Use the existing service to calculate the actual result.
+             * Only completed PASS/FAIL tests are counted.
              */
-            if (inspectionRecords.size() == 5) {
 
-                eccentricityInspectionIds.add(
-                        record.getInspectionId());
+            try {
+
+                EccentricitySummaryResponse summary =
+                        eccentricityRecordService.getSummary(inspectionId);
+
+                if (summary != null
+                        && isFinalResult(summary.getResult())) {
+
+                    eccentricityInspectionIds.add(inspectionId);
+                }
+
+            } catch (Exception ignored) {
+
+                // Invalid historical eccentricity tests are excluded.
             }
         }
 
         // =====================================================
-        // 4. CHECK WHETHER ANY ANALYTICS DATA EXISTS
+        // 4. CHECK WHETHER ANY VALID ANALYTICS DATA EXISTS
         // =====================================================
 
         if (records.isEmpty()
@@ -247,7 +317,7 @@ public class AdvancedAnalyticsService {
                     0,
                     0,
                     "INSUFFICIENT_DATA",
-                    "Perform more weighing, repeatability or eccentricity tests before prediction.",
+                    "Perform more valid weighing, repeatability or eccentricity tests before prediction.",
                     new ArrayList<>()
             );
         }
@@ -256,27 +326,24 @@ public class AdvancedAnalyticsService {
         // 5. TOTAL TEST COUNT
         // =====================================================
 
-        long weighingPerformanceTests =
-                records.size();
+        long weighingPerformanceTests = records.size();
 
-        long repeatabilityTests =
-                repeatabilityTestRunIds.size();
+        long repeatabilityTests = repeatabilityTestRunIds.size();
 
-        long eccentricityTests =
-                eccentricityInspectionIds.size();
+        long eccentricityTests = eccentricityInspectionIds.size();
 
         /*
-         * Actual test executions:
+         * Count actual test executions, not individual readings.
          *
          * WP              = 1 TestRecord = 1 test
          * Repeatability   = 1 testRunId = 1 test
          * Eccentricity    = 1 inspection = 1 test
          */
 
-        long totalTests =
-                weighingPerformanceTests
-                        + repeatabilityTests
-                        + eccentricityTests;
+        long totalTests = weighingPerformanceTests
+                + repeatabilityTests
+                + eccentricityTests;
+
         // =====================================================
         // 6. FAILED TESTS
         // =====================================================
@@ -285,37 +352,30 @@ public class AdvancedAnalyticsService {
          * Start with failed Weighing Performance tests.
          */
 
-        long failedTests =
-                records.stream()
-                        .filter(r ->
-                                "FAIL".equals(r.getResult()))
-                        .count();
+        long failedTests = records.stream()
+                .filter(r -> "FAIL".equals(r.getResult()))
+                .count();
 
         // -----------------------------------------------------
         // REPEATABILITY FAILED RUNS
         // -----------------------------------------------------
 
-        for (Long testRunId :
-                repeatabilityTestRunIds) {
+        for (Long testRunId : repeatabilityTestRunIds) {
 
             try {
 
                 RepeatabilitySummaryResponse summary =
-                        repeatabilityRecordService
-                                .getSummary(testRunId);
+                        repeatabilityRecordService.getSummary(testRunId);
 
-                if ("FAIL".equals(
-                        summary.getResult())) {
+                if (summary != null
+                        && "FAIL".equals(summary.getResult())) {
 
                     failedTests++;
                 }
 
             } catch (Exception ignored) {
 
-                /*
-                 * Ignore invalid/incomplete historical
-                 * repeatability runs.
-                 */
+                // Invalid historical repeatability runs are excluded.
             }
         }
 
@@ -323,27 +383,22 @@ public class AdvancedAnalyticsService {
         // ECCENTRICITY FAILED TESTS
         // -----------------------------------------------------
 
-        for (Long inspectionId :
-                eccentricityInspectionIds) {
+        for (Long inspectionId : eccentricityInspectionIds) {
 
             try {
 
                 EccentricitySummaryResponse summary =
-                        eccentricityRecordService
-                                .getSummary(inspectionId);
+                        eccentricityRecordService.getSummary(inspectionId);
 
-                if ("FAIL".equals(
-                        summary.getResult())) {
+                if (summary != null
+                        && "FAIL".equals(summary.getResult())) {
 
                     failedTests++;
                 }
 
             } catch (Exception ignored) {
 
-                /*
-                 * Ignore invalid/incomplete historical
-                 * eccentricity tests.
-                 */
+                // Invalid historical eccentricity tests are excluded.
             }
         }
 
@@ -354,104 +409,85 @@ public class AdvancedAnalyticsService {
         /*
          * Error statistics remain WP-only.
          *
-         * We do NOT mix:
+         * Do not combine:
+         * - WP measurement error
+         * - Repeatability range
+         * - Eccentricity maximum difference
          *
-         * WP error
-         * Repeatability range
-         * Eccentricity maximum difference
-         *
-         * into one error value.
+         * Null errors have already been excluded from records.
          */
 
-        double averageError =
-                records.stream()
-                        .mapToDouble(r ->
-                                Math.abs(
-                                        r.getError() == null
-                                                ? 0
-                                                : r.getError()))
-                        .average()
-                        .orElse(0);
+        double averageError = records.stream()
+                .mapToDouble(r -> Math.abs(r.getError()))
+                .average()
+                .orElse(0.0);
 
-        double maximumAbsoluteError =
-                records.stream()
-                        .mapToDouble(r ->
-                                Math.abs(
-                                        r.getError() == null
-                                                ? 0
-                                                : r.getError()))
-                        .max()
-                        .orElse(0);
+        double maximumAbsoluteError = records.stream()
+                .mapToDouble(r -> Math.abs(r.getError()))
+                .max()
+                .orElse(0.0);
 
         // =====================================================
         // 8. INSTRUMENT HEALTH SCORE
         // =====================================================
 
-        double healthScore = 100;
+        double healthScore = 100.0;
 
         /*
-         * Every failed test execution gives
-         * a failure penalty.
+         * Custom project scoring rule:
+         * Every failed test execution gives a penalty of 10 points.
          */
 
-        healthScore -=
-                failedTests * 10;
+        healthScore -= failedTests * 10.0;
 
         /*
-         * WP average error penalty.
+         * Apply a penalty based on average WP absolute error.
+         * The maximum average-error penalty is 30 points.
          */
 
-        healthScore -=
-                Math.min(
-                        30,
-                        averageError * 100
-                );
+        healthScore -= Math.min(
+                30.0,
+                averageError * 100.0
+        );
 
         /*
-         * WP maximum error penalty.
+         * Apply a penalty based on maximum WP absolute error.
+         * The maximum error penalty is 20 points.
          */
 
-        healthScore -=
-                Math.min(
-                        20,
-                        maximumAbsoluteError * 100
-                );
+        healthScore -= Math.min(
+                20.0,
+                maximumAbsoluteError * 100.0
+        );
 
-        healthScore =
-                Math.max(
-                        0,
-                        Math.min(
-                                100,
-                                healthScore
-                        )
-                );
+        // Keep the health score within 0 to 100.
+        healthScore = Math.max(
+                0.0,
+                Math.min(100.0, healthScore)
+        );
 
-        healthScore =
-                Math.round(
-                        healthScore * 100.0
-                ) / 100.0;
+        // Round the health score to two decimal places.
+        healthScore = Math.round(
+                healthScore * 100.0
+        ) / 100.0;
 
         String healthStatus;
 
         if (totalTests < 3) {
 
-            healthStatus =
-                    "INSUFFICIENT_DATA";
+            healthStatus = "INSUFFICIENT_DATA";
 
-        } else if (healthScore >= 80) {
+        } else if (healthScore >= 80.0) {
 
-            healthStatus =
-                    "HEALTHY";
+            healthStatus = "HEALTHY";
 
-        } else if (healthScore >= 60) {
+        } else if (healthScore >= 60.0) {
 
-            healthStatus =
-                    "WARNING";
+            healthStatus = "WARNING";
 
         } else {
 
-            healthStatus =
-                    "CRITICAL";
+            healthStatus = "CRITICAL";
         }
 
         // =====================================================
@@ -461,15 +497,13 @@ public class AdvancedAnalyticsService {
         /*
          * Environment data belongs to an inspection.
          *
-         * We collect unique inspection IDs associated with:
-         *
-         * - Weighing Performance
-         * - Repeatability
-         * - Eccentricity
+         * Collect unique inspection IDs associated with valid:
+         * - Weighing Performance tests
+         * - Repeatability tests
+         * - Eccentricity tests
          */
 
-        Set<Long> analyticsInspectionIds =
-                new HashSet<>();
+        Set<Long> analyticsInspectionIds = new HashSet<>();
 
         // -----------------------------------------------------
         // WP inspections
@@ -480,7 +514,8 @@ public class AdvancedAnalyticsService {
             if (record.getInspectionId() != null) {
 
                 analyticsInspectionIds.add(
-                        record.getInspectionId());
+                        record.getInspectionId()
+                );
             }
         }
 
@@ -488,27 +523,20 @@ public class AdvancedAnalyticsService {
         // Repeatability inspections
         // -----------------------------------------------------
 
-        for (RepeatabilityRecord record :
-                allRepeatabilityRecords) {
+        for (Long testRunId : repeatabilityTestRunIds) {
 
-            if (record.getInspectionId() == null) {
-                continue;
-            }
+            List<RepeatabilityRecord> runRecords =
+                    repeatabilityRecordRepository.findByTestRunId(
+                            testRunId
+                    );
 
-            Inspection inspection =
-                    inspectionRepository
-                            .findById(record.getInspectionId())
-                            .orElse(null);
+            if (runRecords != null && !runRecords.isEmpty()) {
 
-            if (inspection == null) {
-                continue;
-            }
+                Long inspectionId = runRecords.get(0).getInspectionId();
 
-            if (instrumentId.equals(
-                    inspection.getInstrumentId())) {
-
-                analyticsInspectionIds.add(
-                        record.getInspectionId());
+                if (inspectionId != null) {
+                    analyticsInspectionIds.add(inspectionId);
+                }
             }
         }
 
@@ -516,105 +544,97 @@ public class AdvancedAnalyticsService {
         // Eccentricity inspections
         // -----------------------------------------------------
 
-        for (EccentricityRecord record :
-                allEccentricityRecords) {
+        for (Long inspectionId : eccentricityInspectionIds) {
 
-            if (record.getInspectionId() == null) {
-                continue;
-            }
-
-            Inspection inspection =
-                    inspectionRepository
-                            .findById(record.getInspectionId())
-                            .orElse(null);
-
-            if (inspection == null) {
-                continue;
-            }
-
-            if (instrumentId.equals(
-                    inspection.getInstrumentId())) {
-
-                analyticsInspectionIds.add(
-                        record.getInspectionId());
-            }
+            analyticsInspectionIds.add(inspectionId);
         }
 
-        double environmentImpactScore = 0;
+        double environmentImpactScore = 0.0;
 
         int environmentSamples = 0;
 
-        for (Long inspectionId :
-                analyticsInspectionIds) {
+        for (Long inspectionId : analyticsInspectionIds) {
 
-            List<EnvironmentRecord>
-                    environmentRecords =
-                    environmentRecordRepository
-                            .findByInspectionId(
-                                    inspectionId);
+            List<EnvironmentRecord> environmentRecords =
+                    environmentRecordRepository.findByInspectionId(
+                            inspectionId
+                    );
 
-            for (EnvironmentRecord environmentRecord :
-                    environmentRecords) {
+            if (environmentRecords == null) {
+                continue;
+            }
 
-                String status =
-                        environmentRecord.getStatus();
+            for (EnvironmentRecord environmentRecord : environmentRecords) {
+
+                if (environmentRecord == null) {
+                    continue;
+                }
+
+                String status = environmentRecord.getStatus();
+
+                /*
+                 * Custom project environment scoring:
+                 *
+                 * NORMAL       = 0 penalty
+                 * WARNING      = 10 penalty
+                 * OUT_OF_RANGE = 20 penalty
+                 *
+                 * Unknown or null statuses are ignored.
+                 */
 
                 if ("OUT_OF_RANGE".equals(status)) {
 
-                    environmentImpactScore += 20;
+                    environmentImpactScore += 20.0;
+                    environmentSamples++;
 
                 } else if ("WARNING".equals(status)) {
 
-                    environmentImpactScore += 10;
+                    environmentImpactScore += 10.0;
+                    environmentSamples++;
 
                 } else if ("NORMAL".equals(status)) {
 
-                    environmentImpactScore += 0;
+                    environmentImpactScore += 0.0;
+                    environmentSamples++;
                 }
-
-                environmentSamples++;
             }
         }
 
+        // Calculate average environment impact.
         if (environmentSamples > 0) {
 
             environmentImpactScore =
-                    environmentImpactScore
-                            / environmentSamples;
+                    environmentImpactScore / environmentSamples;
         }
 
-        environmentImpactScore =
-                Math.min(
-                        100,
-                        environmentImpactScore
-                );
+        // Keep environment impact between 0 and 100.
+        environmentImpactScore = Math.max(
+                0.0,
+                Math.min(100.0, environmentImpactScore)
+        );
 
-        environmentImpactScore =
-                Math.round(
-                        environmentImpactScore * 100.0
-                ) / 100.0;
+        // Round environment impact to two decimal places.
+        environmentImpactScore = Math.round(
+                environmentImpactScore * 100.0
+        ) / 100.0;
 
         String environmentImpactLevel;
 
         if (environmentSamples == 0) {
 
-            environmentImpactLevel =
-                    "INSUFFICIENT_DATA";
+            environmentImpactLevel = "INSUFFICIENT_DATA";
 
-        } else if (environmentImpactScore < 20) {
+        } else if (environmentImpactScore < 5.0) {
 
-            environmentImpactLevel =
-                    "LOW";
+            environmentImpactLevel = "LOW";
 
-        } else if (environmentImpactScore < 50) {
+        } else if (environmentImpactScore < 15.0) {
 
-            environmentImpactLevel =
-                    "MEDIUM";
+            environmentImpactLevel = "MEDIUM";
 
         } else {
 
-            environmentImpactLevel =
-                    "HIGH";
+            environmentImpactLevel = "HIGH";
         }
 
         // =====================================================
@@ -626,79 +646,250 @@ public class AdvancedAnalyticsService {
 
         if (totalTests < 3) {
 
-            recalibrationPrediction =
-                    "INSUFFICIENT_DATA";
+            recalibrationPrediction = "INSUFFICIENT_DATA";
 
             recalibrationRecommendation =
                     "Collect at least 3 completed historical tests.";
 
-        } else if (healthScore < 60 ||
-                failedTests >= 3) {
+        } else if (healthScore < 60.0 || failedTests >= 3) {
 
-            recalibrationPrediction =
-                    "HIGH_RISK";
+            recalibrationPrediction = "HIGH_RISK";
 
             recalibrationRecommendation =
                     "Schedule recalibration or detailed inspection soon.";
 
-        } else if (healthScore < 80 ||
-                averageError > 0.02) {
+        } else if (healthScore < 80.0 || averageError > 0.02) {
 
-            recalibrationPrediction =
-                    "MONITOR";
+            recalibrationPrediction = "MONITOR";
 
             recalibrationRecommendation =
                     "Increase monitoring and consider recalibration.";
 
         } else {
 
-            recalibrationPrediction =
-                    "LOW_RISK";
+            recalibrationPrediction = "LOW_RISK";
 
             recalibrationRecommendation =
                     "Continue routine inspection schedule.";
         }
 
         // =====================================================
-        // 11. DATE-WISE WEIGHING PERFORMANCE TREND
+        // 11. DATE-WISE TREND FOR ALL THREE TEST TYPES
         // =====================================================
 
         /*
-         * Trend remains WP-only.
+         * Trend includes:
          *
-         * Repeatability and Eccentricity are not converted
-         * into WP error values.
+         * WEIGHING_PERFORMANCE:
+         *     Absolute WP measurement error.
+         *
+         * REPEATABILITY:
+         *     Range between maximum and minimum observed readings.
+         *
+         * ECCENTRICITY:
+         *     Maximum absolute difference between observed and reference
+         *     weight across the five positions.
+         *
+         * These different metrics are not combined in WP statistics.
          */
 
         DateTimeFormatter formatter =
                 DateTimeFormatter.ofPattern(
-                        "dd MMM yyyy"
+                        "dd MMM yyyy",
+                        Locale.ENGLISH
                 );
 
-        List<AdvancedAnalyticsResponse.TrendPoint>
-                trend =
-                records.stream()
-                        .filter(r ->
-                                r.getCreatedAt() != null)
-                        .sorted(
-                                Comparator.comparing(
-                                        TestRecord::getCreatedAt
-                                )
-                        )
-                        .map(r ->
-                                new AdvancedAnalyticsResponse.TrendPoint(
-                                        r.getCreatedAt()
-                                                .format(formatter),
+        List<TrendEntry> trendEntries = new ArrayList<>();
 
-                                        Math.abs(
-                                                r.getError() == null
-                                                        ? 0
-                                                        : r.getError()
-                                        ),
+        // -----------------------------------------------------
+        // WEIGHING PERFORMANCE TREND
+        // -----------------------------------------------------
 
-                                        r.getResult()
-                                )
-                        )
+        for (TestRecord record : records) {
+
+            if (record.getCreatedAt() == null) {
+                continue;
+            }
+
+            double error = Math.abs(record.getError());
+
+            AdvancedAnalyticsResponse.TrendPoint point =
+                    new AdvancedAnalyticsResponse.TrendPoint(
+                            record.getCreatedAt().format(formatter),
+                            round(error),
+                            record.getResult(),
+                            "WEIGHING_PERFORMANCE"
+                    );
+
+            trendEntries.add(
+                    new TrendEntry(record.getCreatedAt(), point)
+            );
+        }
+
+        // -----------------------------------------------------
+        // REPEATABILITY TREND
+        // -----------------------------------------------------
+
+        for (Long testRunId : repeatabilityTestRunIds) {
+
+            try {
+
+                List<RepeatabilityRecord> runRecords =
+                        repeatabilityRecordRepository.findByTestRunId(
+                                testRunId
+                        );
+
+                if (runRecords == null || runRecords.size() != 5) {
+                    continue;
+                }
+
+                RepeatabilitySummaryResponse summary =
+                        repeatabilityRecordService.getSummary(testRunId);
+
+                if (summary == null
+                        || !isFinalResult(summary.getResult())) {
+                    continue;
+                }
+
+                /*
+                 * All five readings must have observed weights.
+                 * Otherwise the range cannot be calculated reliably.
+                 */
+
+                List<Double> observedWeights = runRecords.stream()
+                        .map(RepeatabilityRecord::getObservedWeight)
+                        .filter(Objects::nonNull)
+                        .toList();
+
+                if (observedWeights.size() != 5) {
+                    continue;
+                }
+
+                LocalDateTime testDate = runRecords.stream()
+                        .map(RepeatabilityRecord::getCreatedAt)
+                        .filter(Objects::nonNull)
+                        .max(Comparator.naturalOrder())
+                        .orElse(null);
+
+                if (testDate == null) {
+                    continue;
+                }
+
+                double minimum = observedWeights.stream()
+                        .mapToDouble(Double::doubleValue)
+                        .min()
+                        .orElse(0.0);
+
+                double maximum = observedWeights.stream()
+                        .mapToDouble(Double::doubleValue)
+                        .max()
+                        .orElse(0.0);
+
+                double repeatabilityRange = maximum - minimum;
+
+                AdvancedAnalyticsResponse.TrendPoint point =
+                        new AdvancedAnalyticsResponse.TrendPoint(
+                                testDate.format(formatter),
+                                round(repeatabilityRange),
+                                summary.getResult(),
+                                "REPEATABILITY"
+                        );
+
+                trendEntries.add(
+                        new TrendEntry(testDate, point)
+                );
+
+            } catch (Exception ignored) {
+
+                // Invalid historical runs are excluded from the trend.
+            }
+        }
+
+        // -----------------------------------------------------
+        // ECCENTRICITY TREND
+        // -----------------------------------------------------
+
+        for (Long inspectionId : eccentricityInspectionIds) {
+
+            try {
+
+                List<EccentricityRecord> inspectionRecords =
+                        eccentricityRecordRepository.findByInspectionId(
+                                inspectionId
+                        );
+
+                if (inspectionRecords == null
+                        || inspectionRecords.size() != 5) {
+                    continue;
+                }
+
+                EccentricitySummaryResponse summary =
+                        eccentricityRecordService.getSummary(inspectionId);
+
+                if (summary == null
+                        || !isFinalResult(summary.getResult())) {
+                    continue;
+                }
+
+                LocalDateTime testDate = inspectionRecords.stream()
+                        .map(EccentricityRecord::getCreatedAt)
+                        .filter(Objects::nonNull)
+                        .max(Comparator.naturalOrder())
+                        .orElse(null);
+
+                if (testDate == null) {
+                    continue;
+                }
+
+                /*
+                 * Every position must have both reference and observed
+                 * weights. All five positions are required.
+                 */
+
+                List<Double> positionErrors = inspectionRecords.stream()
+                        .filter(r -> r.getReferenceWeight() != null)
+                        .filter(r -> r.getObservedWeight() != null)
+                        .map(r -> Math.abs(
+                                r.getObservedWeight()
+                                        - r.getReferenceWeight()
+                        ))
+                        .toList();
+
+                if (positionErrors.size() != 5) {
+                    continue;
+                }
+
+                double maximumPositionError = positionErrors.stream()
+                        .mapToDouble(Double::doubleValue)
+                        .max()
+                        .orElse(0.0);
+
+                AdvancedAnalyticsResponse.TrendPoint point =
+                        new AdvancedAnalyticsResponse.TrendPoint(
+                                testDate.format(formatter),
+                                round(maximumPositionError),
+                                summary.getResult(),
+                                "ECCENTRICITY"
+                        );
+
+                trendEntries.add(
+                        new TrendEntry(testDate, point)
+                );
+
+            } catch (Exception ignored) {
+
+                // Invalid historical eccentricity tests are excluded.
+            }
+        }
+
+        // Sort all test types by their actual timestamps.
+        trendEntries.sort(
+                Comparator.comparing(TrendEntry::createdAt)
+        );
+
+        List<AdvancedAnalyticsResponse.TrendPoint> trend =
+                trendEntries.stream()
+                        .map(TrendEntry::point)
                         .toList();
 
         // =====================================================
@@ -722,13 +913,183 @@ public class AdvancedAnalyticsService {
     }
 
     // =========================================================
-    // ROUND
+    // HELPER 1: CHECK FINAL TEST RESULT
     // =========================================================
+
+    /*
+     * Only PASS and FAIL are completed test results.
+     * PENDING and unknown results are not counted.
+     */
+
+    private boolean isFinalResult(String result) {
+
+        return "PASS".equals(result)
+                || "FAIL".equals(result);
+    }
+
+    // =========================================================
+    // HELPER 2: VALIDATE REPEATABILITY RUN
+    // =========================================================
+
+    /*
+     * A valid repeatability run requires:
+     * - Exactly five records
+     * - Reading numbers 1, 2, 3, 4 and 5
+     * - No duplicate reading numbers
+     * - All records belong to the expected inspection
+     */
+
+    private boolean isValidRepeatabilityRun(
+            List<RepeatabilityRecord> runRecords,
+            Long expectedInspectionId) {
+
+        if (runRecords == null || runRecords.size() != 5) {
+            return false;
+        }
+
+        if (expectedInspectionId == null) {
+            return false;
+        }
+
+        Set<Integer> readingNumbers = new HashSet<>();
+
+        for (RepeatabilityRecord record : runRecords) {
+
+            if (record.getInspectionId() == null) {
+                return false;
+            }
+
+            if (!expectedInspectionId.equals(
+                    record.getInspectionId())) {
+                return false;
+            }
+
+            Integer readingNumber = record.getReadingNumber();
+
+            if (readingNumber == null) {
+                return false;
+            }
+
+            if (readingNumber < 1 || readingNumber > 5) {
+                return false;
+            }
+
+            if (!readingNumbers.add(readingNumber)) {
+                return false;
+            }
+
+            if (record.getObservedWeight() == null) {
+                return false;
+            }
+        }
+
+        return readingNumbers.size() == 5;
+    }
+
+    // =========================================================
+    // HELPER 3: VALIDATE ECCENTRICITY TEST
+    // =========================================================
+
+    /*
+     * A valid eccentricity test requires exactly five records
+     * containing all five unique positions:
+     *
+     * LEFT, RIGHT, FRONT, BACK and CENTER.
+     *
+     * Historical REAR positions are normalized to BACK.
+     * Duplicate, missing or unexpected positions are rejected.
+     */
+
+    private boolean isValidEccentricityTest(
+            List<EccentricityRecord> inspectionRecords,
+            Long expectedInspectionId) {
+
+        if (inspectionRecords == null
+                || inspectionRecords.size() != 5) {
+            return false;
+        }
+
+        if (expectedInspectionId == null) {
+            return false;
+        }
+
+        Set<String> expectedPositions = Set.of(
+                "LEFT",
+                "RIGHT",
+                "FRONT",
+                "BACK",
+                "CENTER"
+        );
+
+        Set<String> actualPositions = new HashSet<>();
+
+        for (EccentricityRecord record : inspectionRecords) {
+
+            if (record.getInspectionId() == null) {
+                return false;
+            }
+
+            if (!expectedInspectionId.equals(
+                    record.getInspectionId())) {
+                return false;
+            }
+
+            String position = record.getPosition();
+
+            if (position == null) {
+                return false;
+            }
+
+            position = position.trim().toUpperCase(Locale.ROOT);
+
+            // Support both REAR and BACK for historical records.
+            if ("REAR".equals(position)) {
+                position = "BACK";
+            }
+
+            if (!expectedPositions.contains(position)) {
+                return false;
+            }
+
+            if (!actualPositions.add(position)) {
+                return false;
+            }
+
+            if (record.getReferenceWeight() == null
+                    || record.getObservedWeight() == null) {
+                return false;
+            }
+        }
+
+        return actualPositions.size() == 5;
+    }
+
+    // =========================================================
+    // HELPER 4: ROUND VALUES
+    // =========================================================
+
+    /*
+     * Round measurement values to four decimal places.
+     */
 
     private double round(double value) {
 
         return Math.round(
                 value * 10000.0
         ) / 10000.0;
+    }
+
+    // =========================================================
+    // HELPER 5: HOLD A TREND ENTRY WITH ITS TIMESTAMP
+    // =========================================================
+
+    /*
+     * The timestamp is retained internally so all test types
+     * can be sorted chronologically before returning the response.
+     */
+
+    private record TrendEntry(
+            LocalDateTime createdAt,
+            AdvancedAnalyticsResponse.TrendPoint point) {
     }
 }

@@ -165,10 +165,9 @@ public class EccentricityRecordService {
                     "No eccentricity readings found");
         }
 
-        if (records.size() < 5) {
-
+        if (records.size() != 5) {
             throw new IllegalArgumentException(
-                    "Eccentricity test requires 5 positions");
+                    "Eccentricity test requires exactly 5 positions");
         }
 
         records.sort(

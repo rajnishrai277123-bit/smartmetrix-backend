@@ -1,7 +1,7 @@
+
 package com.smartmetrix.backend.inspection;
 
 import org.springframework.data.jpa.repository.JpaRepository;
-
 import java.util.List;
 
 public interface InspectionRepository
@@ -10,4 +10,9 @@ public interface InspectionRepository
     List<Inspection> findByInstrumentId(Long instrumentId);
 
     long countByStatus(String status);
+
+    long countByInstrumentId(Long instrumentId);
+
+    long countByInstrumentIdAndOverallResult(
+            Long instrumentId, String overallResult);
 }

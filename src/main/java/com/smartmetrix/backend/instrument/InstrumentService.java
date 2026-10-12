@@ -66,7 +66,14 @@ public class InstrumentService {
     }
 
 
-    public void deleteInstrument(Long id){
-        instrumentRepository.deleteById(id);
+
+    public void deleteInstrument(Long id) {
+
+        Instrument instrument = instrumentRepository.findById(id)
+                .orElseThrow(() ->
+                        new InstrumentNotFoundException("Instrument not found"));
+
+        instrumentRepository.delete(instrument);
     }
+
 }

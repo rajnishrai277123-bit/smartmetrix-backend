@@ -1,6 +1,8 @@
+
 package com.smartmetrix.backend.instrument;
 
 import com.smartmetrix.backend.instrument.dto.InstrumentHealthResponse;
+import com.smartmetrix.backend.instrument.exception.InstrumentNotFoundException;
 import com.smartmetrix.backend.inspection.Inspection;
 import com.smartmetrix.backend.inspection.InspectionRepository;
 import com.smartmetrix.backend.test.EccentricityRecord;
@@ -45,8 +47,7 @@ public class InstrumentHealthService {
 
         Instrument instrument = instrumentRepository.findById(instrumentId)
                 .orElseThrow(() ->
-                        new RuntimeException("Instrument not found"));
-
+                        new InstrumentNotFoundException("Instrument not found"));
 
         // ==========================================
         // 2. GET ALL INSPECTIONS
@@ -55,8 +56,15 @@ public class InstrumentHealthService {
         List<Inspection> inspections =
                 inspectionRepository.findByInstrumentId(instrumentId);
 
-        int totalInspections = inspections.size();
-
+        // Only inspections with a final PASS or FAIL result
+// will be used for test-quality calculations.
+        List<Inspection> completedInspections = inspections.stream()
+                .filter(i ->
+                        Inspection.RESULT_PASS.equalsIgnoreCase(
+                                i.getOverallResult())
+                                || Inspection.RESULT_FAIL.equalsIgnoreCase(
+                                i.getOverallResult()))
+                .toList();
 
         // ==========================================
         // 3. COUNT PASS AND FAIL
@@ -72,6 +80,8 @@ public class InstrumentHealthService {
                         i.getOverallResult()))
                 .count();
 
+        // Only inspections with PASS or FAIL are counted.
+        int totalInspections = passedInspections + failedInspections;
 
         // ==========================================
         // 4. PASS RATE
@@ -84,14 +94,13 @@ public class InstrumentHealthService {
                     ((double) passedInspections / totalInspections) * 100;
         }
 
-
         // ==========================================
         // 5. WEIGHING PERFORMANCE QUALITY
         // ==========================================
 
         List<Double> wpQualityScores = new ArrayList<>();
 
-        for (Inspection inspection : inspections) {
+        for (Inspection inspection : completedInspections)  {
 
             List<TestRecord> testRecords =
                     testRecordRepository.findByInspectionId(
@@ -112,20 +121,17 @@ public class InstrumentHealthService {
                 }
 
                 double absoluteError = Math.abs(error);
-
                 double quality;
 
                 if (absoluteError >= mpe) {
                     quality = 0.0;
                 } else {
-                    quality =
-                            (1.0 - (absoluteError / mpe)) * 100.0;
+                    quality = (1.0 - (absoluteError / mpe)) * 100.0;
                 }
 
                 wpQualityScores.add(quality);
             }
         }
-
 
         // ==========================================
         // 6. AVERAGE WP QUALITY
@@ -141,19 +147,16 @@ public class InstrumentHealthService {
                 totalQuality += score;
             }
 
-            wpQuality =
-                    totalQuality / wpQualityScores.size();
+            wpQuality = totalQuality / wpQualityScores.size();
         }
-
 
         // ==========================================
         // 7. REPEATABILITY QUALITY
         // ==========================================
 
-        List<Double> repeatabilityQualityScores =
-                new ArrayList<>();
+        List<Double> repeatabilityQualityScores = new ArrayList<>();
 
-        for (Inspection inspection : inspections) {
+            for (Inspection inspection : completedInspections) {
 
             List<RepeatabilityRecord> records =
                     repeatabilityRecordRepository
@@ -163,14 +166,12 @@ public class InstrumentHealthService {
                 continue;
             }
 
-            List<Double> observedWeights =
-                    new ArrayList<>();
+            List<Double> observedWeights = new ArrayList<>();
 
             for (RepeatabilityRecord record : records) {
 
                 if (record.getObservedWeight() != null) {
-                    observedWeights.add(
-                            record.getObservedWeight());
+                    observedWeights.add(record.getObservedWeight());
                 }
             }
 
@@ -178,20 +179,17 @@ public class InstrumentHealthService {
                 continue;
             }
 
-            double minimum =
-                    observedWeights.stream()
-                            .min(Double::compareTo)
-                            .orElse(0.0);
+            double minimum = observedWeights.stream()
+                    .min(Double::compareTo)
+                    .orElse(0.0);
 
-            double maximum =
-                    observedWeights.stream()
-                            .max(Double::compareTo)
-                            .orElse(0.0);
+            double maximum = observedWeights.stream()
+                    .max(Double::compareTo)
+                    .orElse(0.0);
 
             double range = maximum - minimum;
 
-            Double scaleInterval =
-                    instrument.getScaleInterval();
+            Double scaleInterval = instrument.getScaleInterval();
 
             if (scaleInterval == null || scaleInterval <= 0) {
                 continue;
@@ -202,13 +200,11 @@ public class InstrumentHealthService {
             if (range >= scaleInterval) {
                 quality = 0.0;
             } else {
-                quality =
-                        (1.0 - (range / scaleInterval)) * 100.0;
+                quality = (1.0 - (range / scaleInterval)) * 100.0;
             }
 
             repeatabilityQualityScores.add(quality);
         }
-
 
         // ==========================================
         // 8. AVERAGE REPEATABILITY QUALITY
@@ -225,37 +221,31 @@ public class InstrumentHealthService {
             }
 
             repeatabilityQuality =
-                    totalQuality /
-                            repeatabilityQualityScores.size();
+                    totalQuality / repeatabilityQualityScores.size();
         }
-
 
         // ==========================================
         // 9. ECCENTRICITY QUALITY
         // ==========================================
 
-        List<Double> eccentricityQualityScores =
-                new ArrayList<>();
+        List<Double> eccentricityQualityScores = new ArrayList<>();
 
-        for (Inspection inspection : inspections) {
+                for (Inspection inspection : completedInspections) {
 
             List<EccentricityRecord> records =
                     eccentricityRecordRepository
-                            .findByInspectionId(
-                                    inspection.getId());
+                            .findByInspectionId(inspection.getId());
 
             if (records.isEmpty()) {
                 continue;
             }
 
-            List<Double> observedWeights =
-                    new ArrayList<>();
+            List<Double> observedWeights = new ArrayList<>();
 
             for (EccentricityRecord record : records) {
 
                 if (record.getObservedWeight() != null) {
-                    observedWeights.add(
-                            record.getObservedWeight());
+                    observedWeights.add(record.getObservedWeight());
                 }
             }
 
@@ -263,20 +253,17 @@ public class InstrumentHealthService {
                 continue;
             }
 
-            double minimum =
-                    observedWeights.stream()
-                            .min(Double::compareTo)
-                            .orElse(0.0);
+            double minimum = observedWeights.stream()
+                    .min(Double::compareTo)
+                    .orElse(0.0);
 
-            double maximum =
-                    observedWeights.stream()
-                            .max(Double::compareTo)
-                            .orElse(0.0);
+            double maximum = observedWeights.stream()
+                    .max(Double::compareTo)
+                    .orElse(0.0);
 
             double range = maximum - minimum;
 
-            Double scaleInterval =
-                    instrument.getScaleInterval();
+            Double scaleInterval = instrument.getScaleInterval();
 
             if (scaleInterval == null || scaleInterval <= 0) {
                 continue;
@@ -287,13 +274,11 @@ public class InstrumentHealthService {
             if (range >= scaleInterval) {
                 quality = 0.0;
             } else {
-                quality =
-                        (1.0 - (range / scaleInterval)) * 100.0;
+                quality = (1.0 - (range / scaleInterval)) * 100.0;
             }
 
             eccentricityQualityScores.add(quality);
         }
-
 
         // ==========================================
         // 10. AVERAGE ECCENTRICITY QUALITY
@@ -310,10 +295,8 @@ public class InstrumentHealthService {
             }
 
             eccentricityQuality =
-                    totalQuality /
-                            eccentricityQualityScores.size();
+                    totalQuality / eccentricityQualityScores.size();
         }
-
 
         // ==========================================
         // 11. CHECK AVAILABLE QUALITY DATA
@@ -327,14 +310,13 @@ public class InstrumentHealthService {
         boolean hasEccentricity =
                 !eccentricityQualityScores.isEmpty();
 
-
         // ==========================================
         // 12. FINAL HEALTH SCORE
         // ==========================================
 
         double healthScore;
 
-        if (totalInspections == 0) {
+        if (inspections.isEmpty() || totalInspections == 0) {
 
             healthScore = 0.0;
 
@@ -373,10 +355,8 @@ public class InstrumentHealthService {
                 totalWeight += 0.15;
             }
 
-            healthScore =
-                    weightedScore / totalWeight;
+            healthScore = weightedScore / totalWeight;
         }
-
 
         // ==========================================
         // 13. HEALTH STATUS
@@ -384,7 +364,7 @@ public class InstrumentHealthService {
 
         String healthStatus;
 
-        if (totalInspections == 0) {
+        if (inspections.isEmpty() || totalInspections == 0) {
 
             healthStatus = "NO_DATA";
 
@@ -400,7 +380,6 @@ public class InstrumentHealthService {
 
             healthStatus = "CRITICAL";
         }
-
 
         // ==========================================
         // 14. ROUND VALUES
@@ -420,7 +399,6 @@ public class InstrumentHealthService {
 
         double roundedHealthScore =
                 Math.round(healthScore * 100.0) / 100.0;
-
 
         // ==========================================
         // 15. RETURN RESPONSE

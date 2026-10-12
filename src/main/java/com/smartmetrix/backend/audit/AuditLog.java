@@ -1,3 +1,4 @@
+
 package com.smartmetrix.backend.audit;
 
 import jakarta.persistence.*;
@@ -27,6 +28,13 @@ public class AuditLog {
     private String newValue;
 
     private LocalDateTime timestamp;
+
+    // Hash-chain fields
+    @Column(length = 64)
+    private String previousHash;
+
+    @Column(length = 64)
+    private String currentHash;
 
     public AuditLog() {
     }
@@ -89,5 +97,21 @@ public class AuditLog {
 
     public void setTimestamp(LocalDateTime timestamp) {
         this.timestamp = timestamp;
+    }
+
+    public String getPreviousHash() {
+        return previousHash;
+    }
+
+    public void setPreviousHash(String previousHash) {
+        this.previousHash = previousHash;
+    }
+
+    public String getCurrentHash() {
+        return currentHash;
+    }
+
+    public void setCurrentHash(String currentHash) {
+        this.currentHash = currentHash;
     }
 }
