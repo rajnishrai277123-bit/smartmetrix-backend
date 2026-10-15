@@ -1,6 +1,10 @@
+
 package com.smartmetrix.backend.approval;
 
 import jakarta.persistence.*;
+import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.NotNull;
+import jakarta.validation.constraints.Size;
 
 @Entity
 @Table(name = "approvals")
@@ -10,12 +14,17 @@ public class Approval {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
+    @NotNull(message = "Inspection ID is required")
     private Long inspectionId;
 
     private Long userId;
 
+    @NotBlank(message = "Action is required")
     private String action;
 
+    @NotBlank(message = "Remarks are required")
+    @Size(max = 1000, message = "Remarks cannot exceed 1000 characters")
+    @Column(length = 1000)
     private String remarks;
 
     public Approval() {
